@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name              全网VIP视频免费解析去广告【最新3.2】
 // @namespace         video_vip
-// @version           3.2.9.2
+// @version           3.2.9.3
 // @description       全网VIP视频免费破解去广告，支持爱奇艺、腾讯、优酷、芒果、哔哩哔哩等主流视频网站VIP视频解析，适配桌面端和移动端【脚本长期维护更新，完全免费，无广告，仅限学习交流！】
 // @license           GPL-3.0 License
 // @icon              https://cdn.jsdmirror.com/gh/88lin/picx-images-hosting@master/favicon.67xwxgc03y.svg
@@ -44,6 +44,13 @@
 // @require           https://cdn.jsdmirror.com/npm/jquery@3.7.1/dist/jquery.min.js
 // @connect           wsyzy.cc
 // @connect           api.wsyzy.net
+// @connect           free.maccms.xyz
+// @connect           bfq.txnp.cn
+// @connect           jx.202617.xyz
+// @connect           json.fongmi.cc
+// @connect           bd.jx.cn
+// @connect           jx.hls.one
+// @connect           jx.playerjy.com
 // @grant             unsafeWindow
 // @grant             GM_addStyle
 // @grant             GM_openInTab
@@ -1068,6 +1075,48 @@ const superVip = (function () {
         return { play, stop: abort };
     })();
 
+    /* ==========================================================
+     * 接口测速优选模块：并发探测各解析接口的响应耗时，
+     * 供面板「优选 ⚡」按钮按速度排序并标记最快线路
+     * ========================================================== */
+    const speedTest = (function () {
+        const TIMEOUT = 5000;
+
+        // 解析接口只探测源站首页（避免触发真实解析任务给免费接口加压），
+        // 无损云用官网轻量搜索接口作为健康探测
+        function probeUrl(item) {
+            if (item.wsyzy) return 'https://wsyzy.cc/index.php/ajax/suggest?mid=1&wd=a';
+            try {
+                return new URL(item.url).origin + '/';
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 耗时以 onload/onerror/ontimeout 中先到达者为准；失败统一返回 -1（超时）
+        function probe(item) {
+            const url = probeUrl(item);
+            return new Promise((resolve) => {
+                if (!url) {
+                    resolve(-1);
+                    return;
+                }
+                const start = Date.now();
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    timeout: TIMEOUT,
+                    headers: {'Cache-Control': 'no-cache'},
+                    onload: () => resolve(Math.max(1, Date.now() - start)),
+                    onerror: () => resolve(-1),
+                    ontimeout: () => resolve(-1)
+                });
+            });
+        }
+
+        return { probe };
+    })();
+
     class BaseConsumer {
         constructor() {
             this.parse = () => {
@@ -1175,6 +1224,7 @@ const superVip = (function () {
                 #${_CONFIG_.vipBoxId} .vip_repo_btn:hover { color: #93c5fd; border-color: rgba(96, 165, 250, .5); background: rgba(59, 130, 246, .14); }
                 #${_CONFIG_.vipBoxId} .vip_more_btn:hover { color: #c4b5fd; border-color: rgba(139, 92, 246, .5); background: rgba(139, 92, 246, .12); }
                 #${_CONFIG_.vipBoxId} .vip_web_btn:hover { color: #86efac; border-color: rgba(74, 222, 128, .5); background: rgba(34, 197, 94, .12); }
+                #${_CONFIG_.vipBoxId} .vip_speed_btn:hover { color: #fde047; border-color: rgba(250, 204, 21, .5); background: rgba(250, 204, 21, .12); }
                 #${_CONFIG_.vipBoxId} .vip_list button:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
                 /* 分节 */
                 #${_CONFIG_.vipBoxId} .vip_section { padding: 10px 12px 6px; }
@@ -1190,12 +1240,29 @@ const superVip = (function () {
                     display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0; padding: 0; list-style: none;
                 }
                 #${_CONFIG_.vipBoxId} .vip_list li {
-                    display: block; box-sizing: border-box; height: 30px; line-height: 28px; padding: 0 8px;
+                    display: flex; align-items: center; justify-content: center; gap: 4px;
+                    box-sizing: border-box; height: 30px; line-height: 28px; padding: 0 8px;
                     border-radius: 9px; font-size: 12.5px; font-weight: 500; color: #cbd5e1; text-align: center;
                     background: rgba(148, 163, 184, .06); border: 1px solid rgba(148, 163, 184, .14);
-                    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; float: none; cursor: pointer;
+                    overflow: hidden; white-space: nowrap; cursor: pointer; float: none;
                     transition: color .15s, border-color .15s, background .15s, box-shadow .15s, transform .15s;
                 }
+                #${_CONFIG_.vipBoxId} .vip_list li .vip_name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+                /* 测速耗时徽标（优选功能） */
+                #${_CONFIG_.vipBoxId} .vip_list li .vip_ping {
+                    flex-shrink: 0; font-style: normal; font-size: 9.5px; line-height: 1; font-weight: 600;
+                    padding: 3px 4px; border-radius: 4px; color: #64748b; background: rgba(148, 163, 184, .14);
+                }
+                #${_CONFIG_.vipBoxId} .vip_list li .vip_ping:empty { display: none; }
+                #${_CONFIG_.vipBoxId} .vip_list li .vip_ping.fast { color: #4ade80; background: rgba(74, 222, 128, .14); }
+                #${_CONFIG_.vipBoxId} .vip_list li .vip_ping.mid { color: #fbbf24; background: rgba(251, 191, 36, .14); }
+                #${_CONFIG_.vipBoxId} .vip_list li .vip_ping.slow { color: #f87171; background: rgba(248, 113, 113, .14); }
+                /* 最快线路标记 */
+                #${_CONFIG_.vipBoxId} .vip_list li.vip_fastest {
+                    border-color: rgba(74, 222, 128, .6);
+                    box-shadow: inset 0 0 0 1px rgba(74, 222, 128, .35);
+                }
+                #${_CONFIG_.vipBoxId} .vip_list li.vip_fastest .vip_name::before { content: '⚡'; font-size: 10px; margin-right: 2px; }
                 #${_CONFIG_.vipBoxId} .vip_list li:active { transform: scale(.97); }
                 #${_CONFIG_.vipBoxId} .vip_list li:hover { color: #fff; border-color: rgba(139, 92, 246, .55); background: rgba(139, 92, 246, .14); }
                 #${_CONFIG_.vipBoxId} .vip_list li.selected {
@@ -1232,14 +1299,14 @@ const superVip = (function () {
             let type_3_str = "";
             _CONFIG_.videoParseList.forEach((item, index) => {
                 if (item.wsyzy) {
-                    type_1_str += `<li class="nq-li" title="${item.name}（屏蔽欧美、欧洲线路）" data-index="${index}">${item.name}</li>`;
+                    type_1_str += `<li class="nq-li" title="${item.name}（屏蔽欧美、欧洲线路）" data-index="${index}"><span class="vip_name">${item.name}</span><i class="vip_ping" data-index="${index}"></i></li>`;
                     return;
                 }
                 if (item.type.includes("1")) {
-                    type_1_str += `<li class="nq-li" title="${item.name}" data-index="${index}">${item.name}</li>`;
+                    type_1_str += `<li class="nq-li" title="${item.name}" data-index="${index}"><span class="vip_name">${item.name}</span><i class="vip_ping" data-index="${index}"></i></li>`;
                 }
                 if (item.type.includes("3")) {
-                    type_3_str += `<li class="tc-li" title="${item.name}" data-index="${index}">${item.name}</li>`;
+                    type_3_str += `<li class="tc-li" title="${item.name}" data-index="${index}"><span class="vip_name">${item.name}</span><i class="vip_ping" data-index="${index}"></i></li>`;
                 }
             });
 
@@ -1252,6 +1319,7 @@ const superVip = (function () {
                         <div class="vip_list">
                             <div class="vip_panel_head">
                                 <span class="vip_panel_title">视频解析中心<em>免费开源</em></span>
+                                <button type="button" class="vip_speed_btn" title="对全部接口测速，按速度排序并标记最快线路">优选 ⚡</button>
                                 <button type="button" class="vip_sponsor_btn" title="赞助支持脚本持续维护">赞助 💗</button>
                                 <button type="button" class="vip_repo_btn" title="打开 GitHub 开源地址">仓库 ⭐</button>
                             </div>
@@ -1275,7 +1343,7 @@ const superVip = (function () {
                                     <b>1.</b> 本脚本为开源项目，完全免费，请勿上当受骗；
                                     <br><b>2.</b> 视频内广告系资源自带，请勿轻信任何广告，可快进跳过；
                                     <br><b>3.</b> 无损云解析为资源采集模式，已屏蔽欧美、欧洲线路；
-                                    <br><b>4.</b> 如遇卡顿/无法加载，可切换不同线路或使用海外网络观看；
+                                    <br><b>4.</b> 如遇卡顿/无法加载，可点击顶部「优选 ⚡」测速后选最快线路，或使用海外网络观看；
                                     <br><b>5.</b> 后续更新在 GitHub 仓库：88lin/video_vip；
                                     <br><b>6.</b> 资源均来自互联网公开分享，未提供资源上传、存储服务。
                                 </div>
@@ -1305,6 +1373,73 @@ const superVip = (function () {
             }
         }
 
+        // 优选：并发测速全部接口 → 徽标显示耗时 → 分区内按速度排序 → 标记最快内嵌线路
+        async runSpeedTest(vipBox) {
+            if (this._speedRunning) return;
+            this._speedRunning = true;
+            const btn = vipBox.find(".vip_speed_btn");
+            const list = _CONFIG_.videoParseList;
+            if (this._speedLabelTimer) clearTimeout(this._speedLabelTimer);
+            btn.html("测速中…");
+            vipBox.find(".vip_list li").removeClass("vip_fastest");
+            vipBox.find(".vip_ping").removeClass("fast mid slow").text("…");
+
+            const renderPing = (index, ms) => {
+                const text = ms < 0 ? "超时" : ms + "ms";
+                vipBox.find(`.vip_ping[data-index="${index}"]`).each((i, el) => {
+                    el.textContent = text;
+                    el.classList.remove("fast", "mid", "slow");
+                    if (ms >= 0) {
+                        el.classList.add(ms < 500 ? "fast" : (ms < 1200 ? "mid" : "slow"));
+                    }
+                });
+                // 同一接口可能同时出现在内嵌/弹窗两个分区，标题一并更新
+                vipBox.find(`.vip_list li[data-index="${index}"]`).each((i, el) => {
+                    const item = list[index];
+                    el.setAttribute("title", item.name + (item.wsyzy ? "（屏蔽欧美、欧洲线路）" : "") + " · " + text);
+                });
+            };
+
+            try {
+                const results = await Promise.all(list.map((item) => speedTest.probe(item)));
+                results.forEach((ms, index) => renderPing(index, ms));
+
+                // 分区内按耗时升序重排（失败沉底，同耗时保持原顺序）；data-index 不变，点击逻辑不受影响
+                vipBox.find(".vip_list ul").each((ui, ul) => {
+                    const lis = Array.prototype.slice.call(ul.querySelectorAll("li"));
+                    lis.sort((a, b) => {
+                        const ia = parseInt(a.getAttribute("data-index"), 10);
+                        const ib = parseInt(b.getAttribute("data-index"), 10);
+                        const va = results[ia] < 0 ? Infinity : results[ia];
+                        const vb = results[ib] < 0 ? Infinity : results[ib];
+                        return va === vb ? ia - ib : va - vb;
+                    });
+                    lis.forEach((li) => ul.appendChild(li));
+                });
+
+                let bestIdx = -1;
+                let bestMs = Infinity;
+                list.forEach((item, index) => {
+                    if (item.type.includes("1") && results[index] >= 0 && results[index] < bestMs) {
+                        bestMs = results[index];
+                        bestIdx = index;
+                    }
+                });
+                if (bestIdx >= 0) {
+                    vipBox.find(`.vip_list li[data-index="${bestIdx}"]`).addClass("vip_fastest");
+                    btn.html(`⚡ ${list[bestIdx].name} ${bestMs}ms`);
+                } else {
+                    btn.html("全部超时");
+                }
+                this._speedLabelTimer = setTimeout(() => btn.html("优选 ⚡"), 2600);
+            } catch (e) {
+                btn.html("测速失败");
+                this._speedLabelTimer = setTimeout(() => btn.html("优选 ⚡"), 2600);
+            } finally {
+                this._speedRunning = false;
+            }
+        }
+
         bindEvent(container) {
             const vipBox = $(`#${_CONFIG_.vipBoxId}`);
             if (_CONFIG_.isMobile) {
@@ -1326,6 +1461,10 @@ const superVip = (function () {
             vipBox.find("#vip_reload").on("click", (event) => {
                 event.stopPropagation();
                 this.reloadCurrentPlayer();
+            });
+            vipBox.find(".vip_speed_btn").on("click", (event) => {
+                event.stopPropagation();
+                this.runSpeedTest(vipBox);
             });
             vipBox.find(".vip_repo_btn").on("click", (event) => {
                 event.stopPropagation();
