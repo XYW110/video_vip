@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name              全网VIP视频免费解析去广告【最新3.2】
 // @namespace         video_vip
-// @version           3.2.9
+// @version           3.2.9.2
 // @description       全网VIP视频免费破解去广告，支持爱奇艺、腾讯、优酷、芒果、哔哩哔哩等主流视频网站VIP视频解析，适配桌面端和移动端【脚本长期维护更新，完全免费，无广告，仅限学习交流！】
 // @license           GPL-3.0 License
 // @icon              https://cdn.jsdmirror.com/gh/88lin/picx-images-hosting@master/favicon.67xwxgc03y.svg
@@ -50,7 +50,7 @@
 // @grant             GM_getValue
 // @grant             GM_setValue
 // @grant             GM_xmlhttpRequest
-// @charset		      UTF-8
+// @charset                   UTF-8
 // @compatible        firefox
 // @compatible        chrome
 // @compatible        opera safari edge
@@ -217,7 +217,7 @@ const superVip = (function () {
             {"name": "七哥解析", "type": "1,3", "url": "https://jx.202617.xyz/tv.php?url="},
             {"name": "fongmi解析", "type": "1,3", "url": "https://json.fongmi.cc/web?url="},
             {"name": "冰豆解析", "type": "1,3", "url": "https://bd.jx.cn/?url="},
-			{"name": "HLS解析", "type": "1,3", "url": "https://jx.hls.one/?url="},
+                        {"name": "HLS解析", "type": "1,3", "url": "https://jx.hls.one/?url="},
             {"name": "Player-JY", "type": "1,3", "url": "https://jx.playerjy.com/?url="},
         ],
         playerContainers: [
@@ -266,6 +266,39 @@ const superVip = (function () {
             {host: "www.1905.com", container: "#player,#vodPlayer", name: "Default", displayNodes: []},
         ]
     };
+
+    // ===== 全屏自动隐藏浮窗（v3.2.9.1 本地补丁）=====
+    // 背景：腾讯视频的两种全屏都盖不住浮窗——
+    //   1) 真全屏是对根元素 <html> 调 requestFullscreen，整棵文档仍会渲染，浮窗照常置顶；
+    //   2) 「网页全屏」是 CSS 伪全屏（.thumbplayer-fake-fullscreen，z-index 仅 9999），浮窗压在其上。
+    // 策略：检测到这两种状态时把浮窗临时透明化并禁用交互，退出后恢复原状。
+    function startFullscreenFloatGuard() {
+        const shouldHide = () =>
+            // 1) 根元素真全屏：全屏的是整个文档，浮窗会叠在全屏画面上（其他站点若也这么做，同样会被此条覆盖）
+            document.fullscreenElement === document.documentElement ||
+            // 2) 腾讯视频 CSS 伪全屏（网页全屏）：不触发 fullscreenchange，只能靠轮询捕获
+            !!document.querySelector('.thumbplayer-fake-fullscreen');
+        const sync = () => {
+            // vipBoxId 为 vip_jx_box+随机数，且脚本重跑可能产生重复 id 的旧节点，统一按前缀收集
+            const boxes = document.querySelectorAll('div[id^="vip_jx_box"]');
+            if (!boxes.length) return;
+            if (shouldHide()) {
+                boxes.forEach((box) => {
+                    box.style.setProperty('opacity', '0', 'important');
+                    box.style.setProperty('pointer-events', 'none', 'important');
+                });
+            } else {
+                // 恢复：直接移除内联覆盖，回落到样式表默认的 opacity:1 / pointer-events:auto
+                boxes.forEach((box) => {
+                    box.style.removeProperty('opacity');
+                    box.style.removeProperty('pointer-events');
+                });
+            }
+        };
+        document.addEventListener('fullscreenchange', sync); // 真全屏进入/退出即时响应
+        setInterval(sync, 300); // 伪全屏轮询兜底：一次类名查询开销极低
+        sync();
+    }
 
     function buildPlayerFrameLayout({isMobile, containerRect = {}, containerStyle = {}, viewportHeight = 0}) {
         const parsePixelValue = (value) => {
@@ -634,8 +667,8 @@ const superVip = (function () {
                         position: "absolute", top: "0", right: "0", bottom: "0", width: "170px",
                         overflowX: "hidden", overflowY: "auto",
                         zIndex: "2147483647", display: "none",
-                        background: "rgba(7,24,39,.94)", padding: "8px 6px", boxSizing: "border-box",
-                        borderRadius: "10px 0 0 10px", border: "1px solid rgba(14,165,233,.25)",
+                        background: "rgba(11,17,29,.92)", padding: "8px 6px", boxSizing: "border-box",
+                        borderRadius: "10px 0 0 10px", border: "1px solid rgba(148,163,184,.2)",
                         borderRight: "none", boxShadow: "-6px 0 16px rgba(0,0,0,.45)"
                     });
 
@@ -651,7 +684,7 @@ const superVip = (function () {
                     applyInlineStyles(placeholder, {
                         position: "absolute", inset: "0", zIndex: "2147483646",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        background: "#000", color: "#7dd3fc", fontSize: "15px",
+                        background: "#000", color: "#c4b5fd", fontSize: "15px",
                         textAlign: "center", padding: "0 16px", lineHeight: "1.8",
                         flexDirection: "column", gap: "6px"
                     });
@@ -681,7 +714,7 @@ const superVip = (function () {
                         head.textContent = '搜到多个相关结果，请选择要播放的：';
                         applyInlineStyles(head, {
                             fontSize: _CONFIG_.isMobile ? '13px' : '14px',
-                            fontWeight: '600', color: '#7dd3fc',
+                            fontWeight: '600', color: '#c4b5fd',
                             padding: '0 10px', lineHeight: '1.6', flexShrink: '0'
                         });
                         const box = document.createElement('div');
@@ -747,8 +780,8 @@ const superVip = (function () {
                                 if (i === 0) {
                                     btn.style.background = 'rgba(139,92,246,.32)';
                                 } else {
-                                    btn.style.background = 'rgba(56,189,248,.15)';
-                                    btn.style.borderColor = 'rgba(56,189,248,.6)';
+                                    btn.style.background = 'rgba(139,92,246,.16)';
+                                    btn.style.borderColor = 'rgba(139,92,246,.5)';
                                 }
                             });
                             btn.addEventListener('mouseleave', () => {
@@ -814,26 +847,26 @@ const superVip = (function () {
                     fontSize: '12px', lineHeight: '20px', borderRadius: '6px', cursor: 'pointer',
                     userSelect: 'none', transition: 'all .15s ease', textAlign: 'center',
                     overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-                    color: idx === current ? '#ffffff' : '#bae6fd',
-                    background: idx === current ? '#0369a1' : '#0b2942',
-                    border: '1px solid ' + (idx === current ? '#38bdf8' : '#155e75'),
-                    boxShadow: idx === current ? '0 2px 6px rgba(14,165,233,.35)' : 'none'
+                    color: idx === current ? '#ffffff' : '#cbd5e1',
+                    background: idx === current ? '#7c3aed' : 'rgba(148,163,184,.08)',
+                    border: '1px solid ' + (idx === current ? '#a78bfa' : 'rgba(148,163,184,.2)'),
+                    boxShadow: idx === current ? '0 2px 6px rgba(109,40,217,.4)' : 'none'
                 });
                 btn.addEventListener('mouseenter', () => {
-                    if (idx !== current) { btn.style.background = '#0e7490'; btn.style.borderColor = '#38bdf8'; }
+                    if (idx !== current) { btn.style.background = 'rgba(139,92,246,.22)'; btn.style.borderColor = '#a78bfa'; }
                 });
                 btn.addEventListener('mouseleave', () => {
-                    if (idx !== current) { btn.style.background = '#0b2942'; btn.style.borderColor = '#155e75'; }
+                    if (idx !== current) { btn.style.background = 'rgba(148,163,184,.08)'; btn.style.borderColor = 'rgba(148,163,184,.2)'; }
                 });
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     load(ep);
                     [...epBar.children].forEach(c => {
-                        c.style.background = '#0b2942'; c.style.color = '#bae6fd';
-                        c.style.borderColor = '#155e75'; c.style.boxShadow = 'none';
+                        c.style.background = 'rgba(148,163,184,.08)'; c.style.color = '#cbd5e1';
+                        c.style.borderColor = 'rgba(148,163,184,.2)'; c.style.boxShadow = 'none';
                     });
-                    btn.style.background = '#0369a1'; btn.style.color = '#ffffff';
-                    btn.style.borderColor = '#38bdf8'; btn.style.boxShadow = '0 2px 6px rgba(14,165,233,.35)';
+                    btn.style.background = '#7c3aed'; btn.style.color = '#ffffff';
+                    btn.style.borderColor = '#a78bfa'; btn.style.boxShadow = '0 2px 6px rgba(109,40,217,.4)';
                     current = idx;
                 });
                 epBar.appendChild(btn);
@@ -859,8 +892,8 @@ const superVip = (function () {
                 applyInlineStyles(tab, {
                     position: 'absolute', top: '10px', right: '10px', zIndex: '2147483647',
                     padding: '6px 12px', fontSize: '13px', lineHeight: '18px',
-                    background: 'rgba(7,24,39,.88)', color: '#7dd3fc',
-                    border: '1px solid #0ea5e9', borderRadius: '8px', cursor: 'pointer',
+                    background: 'rgba(11,17,29,.88)', color: '#c4b5fd',
+                    border: '1px solid rgba(139,92,246,.55)', borderRadius: '8px', cursor: 'pointer',
                     userSelect: 'none', boxShadow: '0 3px 10px rgba(0,0,0,.35)',
                     transition: 'all .15s ease'
                 });
@@ -879,8 +912,8 @@ const superVip = (function () {
                 el.id = 'wsyzy_toast';
                 applyInlineStyles(el, {
                     position: 'fixed', top: '8%', transform: 'translate(-50%, -50%)',
-                    zIndex: '2147483647', background: 'rgba(7,24,39,.95)', color: '#bae6fd',
-                    border: '1px solid #0ea5e9', borderRadius: '10px', padding: '12px 24px',
+                    zIndex: '2147483647', background: 'rgba(15,23,42,.94)', color: '#e2e8f0',
+                    border: '1px solid rgba(139,92,246,.5)', borderRadius: '10px', padding: '12px 24px',
                     fontSize: '14px', textAlign: 'center', maxWidth: '80vw',
                     boxShadow: '0 8px 28px rgba(0,0,0,.5)', lineHeight: '1.6'
                 });
@@ -1060,44 +1093,140 @@ const superVip = (function () {
 
         generateElement(container) {
             GM_addStyle(`
-                        #${_CONFIG_.vipBoxId} {cursor:pointer; position:fixed; top:120px; left:0px; z-index:2147483647; text-align:left; display:block !important; visibility:visible !important; opacity:1 !important; pointer-events:auto !important; font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei","Segoe UI",sans-serif;}
-                        #${_CONFIG_.vipBoxId} .img_box{width:32px; height:32px;line-height:32px;text-align:center;color:#fff7ed !important;background:#334155;border:1px solid rgba(255,255,255,.18);box-shadow:0 5px 16px rgba(2,8,23,.3),inset 0 1px 0 rgba(255,255,255,.16);margin:3px 0px;border-radius:9px !important;}
-                        #${_CONFIG_.vipBoxId} .vip_icon > .img_box{background:#6d28d9;border-color:#a78bfa;box-shadow:0 5px 16px rgba(109,40,217,.34),inset 0 1px 0 rgba(255,255,255,.18);}
-                        #${_CONFIG_.vipBoxId} #vip_auto{color:#f5f3ff !important;background:#4338ca;border-color:#a5b4fc;box-shadow:0 5px 16px rgba(67,56,202,.3),inset 0 1px 0 rgba(255,255,255,.18);}
-                        #${_CONFIG_.vipBoxId} #vip_reload{color:#fff1f2 !important;background:#be123c;border-color:#fda4af;box-shadow:0 5px 16px rgba(190,18,60,.28),inset 0 1px 0 rgba(255,255,255,.18);}
-                        #${_CONFIG_.vipBoxId} .vip_icon{position:relative;}
-                        #${_CONFIG_.vipBoxId} .vip_list {display:none; position:absolute; border-radius:10px; left:34px; top:-30px; text-align:center; background:#071827; border:1px solid #0ea5e9;box-shadow:0 12px 30px rgba(2,12,27,.5);padding:10px 0px; width:380px; max-height:420px; overflow-y:auto;}
-                        #${_CONFIG_.vipBoxId} .vip_repo_btn{position:absolute; top:8px; right:10px; display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 10px; border-radius:999px; border:1px solid rgba(125,211,252,.72); background:#e0f2fe; color:#082f49; font-size:11px; font-weight:700; line-height:24px; cursor:pointer; user-select:none; box-shadow:0 3px 8px rgba(14,165,233,.24); transition:background .18s ease,color .18s ease,border-color .18s ease,transform .18s ease;}
-                        #${_CONFIG_.vipBoxId} .vip_repo_btn:hover{background:#38bdf8; color:#ffffff; border-color:#bae6fd; transform:translateY(-1px);}
-                        #${_CONFIG_.vipBoxId} .vip_repo_btn:focus-visible{outline:2px solid #fef08a; outline-offset:2px;}
-                        #${_CONFIG_.vipBoxId} .vip_sponsor_btn{position:absolute; top:8px; left:10px; display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 10px; border-radius:999px; border:1px solid rgba(244,114,182,.72); background:#fdf2f8; color:#9d174d; font-size:11px; font-weight:700; line-height:24px; cursor:pointer; user-select:none; box-shadow:0 3px 8px rgba(236,72,153,.24); transition:background .18s ease,color .18s ease,border-color .18s ease,transform .18s ease;}
-                        #${_CONFIG_.vipBoxId} .vip_sponsor_btn:hover{background:#ec4899; color:#ffffff; border-color:#fbcfe8; transform:translateY(-1px);}
-                        #${_CONFIG_.vipBoxId} .vip_sponsor_btn:focus-visible{outline:2px solid #f9a8d4; outline-offset:2px;}
-                        #${_CONFIG_.vipBoxId} .vip_sec_head{position:relative; padding:5px 0px 0px;}
-                        #${_CONFIG_.vipBoxId} .vip_sec_head button{position:absolute; top:50%; transform:translateY(-50%); display:inline-flex; align-items:center; justify-content:center; height:22px; padding:0 9px; border-radius:999px; font-size:11px; font-weight:700; line-height:22px; cursor:pointer; user-select:none; border:1px solid transparent; transition:background .18s ease,color .18s ease,border-color .18s ease,transform .18s ease;}
-                        #${_CONFIG_.vipBoxId} .vip_sec_head button:hover{transform:translateY(calc(-50% - 1px));}
-                        #${_CONFIG_.vipBoxId} .vip_more_btn{left:10px; background:#f5f3ff; color:#5b21b6; border-color:rgba(167,139,250,.72); box-shadow:0 3px 8px rgba(139,92,246,.24);}
-                        #${_CONFIG_.vipBoxId} .vip_more_btn:hover{background:#8b5cf6; color:#ffffff; border-color:#ddd6fe;}
-                        #${_CONFIG_.vipBoxId} .vip_web_btn{right:10px; background:#ecfdf5; color:#065f46; border-color:rgba(52,211,153,.72); box-shadow:0 3px 8px rgba(16,185,129,.24);}
-                        #${_CONFIG_.vipBoxId} .vip_web_btn:hover{background:#10b981; color:#ffffff; border-color:#a7f3d0;}
-                        #${_CONFIG_.vipBoxId} .vip_list li{border-radius:5px; font-size:12px; color:#e0f7ff; text-align:center; width:calc(25% - 14px); line-height:22px; float:left; border:1px solid #155e75; background:#0b2942; padding:0 4px; margin:4px 2px;overflow:hidden;white-space: nowrap;text-overflow: ellipsis;-o-text-overflow:ellipsis;}
-                        #${_CONFIG_.vipBoxId} .vip_list li:hover{color:#ffffff; border:1px solid #38bdf8; background:#0e7490;}
-                        #${_CONFIG_.vipBoxId} .vip_list ul{padding-left: 10px; margin:0 0 4px 0;}
-                        #${_CONFIG_.vipBoxId} .vip_list b{color:#7dd3fc;}
-                        #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar{width:5px; height:1px;}
-                        #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar-thumb{box-shadow:inset 0 0 6px rgba(0, 0, 0, 0.2); background:#0ea5e9;}
-                        #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar-track{box-shadow:inset 0 0 6px rgba(0, 0, 0, 0.2); background:#03111f;}
-                        #${_CONFIG_.vipBoxId} li.selected{color:#ffffff; border:1px solid #7dd3fc; background:#075985;}
-                        @media (max-width: 520px) {
-                            #${_CONFIG_.vipBoxId} .vip_list {left:38px; top:-30px; width:calc(100vw - 48px); max-width:360px; max-height:70vh; box-sizing:border-box;}
-                            #${_CONFIG_.vipBoxId} .vip_list li{width:calc(50% - 14px); line-height:28px; font-size:13px;}
-                            #${_CONFIG_.vipBoxId} .vip_list ul{padding-left:8px;}
-                            #${_CONFIG_.vipBoxId} .vip_list h3{font-size:14px !important; padding:4px 0px !important;}
-                            #${_CONFIG_.vipBoxId} .vip_sec_head{padding:4px 0px 0px;}
-                            #${_CONFIG_.vipBoxId} .vip_sec_head h3{font-size:13px !important;}
-                            #${_CONFIG_.vipBoxId} .vip_sec_head button{height:20px; padding:0 7px; font-size:10px; line-height:20px;}
-                        }
-						`);
+                /* ===== v3.2.9.2 视觉重设计：深色玻璃 + 紫色主色 ===== */
+                #${_CONFIG_.vipBoxId} {
+                    cursor: pointer; position: fixed; top: 120px; left: 0px; z-index: 2147483647; text-align: left;
+                    display: flex !important; flex-direction: column; align-items: flex-start; gap: 7px;
+                    visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
+                    font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", sans-serif;
+                }
+                /* 悬浮按钮基座（玻璃拟态） */
+                #${_CONFIG_.vipBoxId} .img_box {
+                    display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+                    width: 36px; height: 36px; color: #cbd5e1; font-size: 13px; font-weight: 700; line-height: 1;
+                    background: rgba(15, 23, 42, .78); border: 1px solid rgba(148, 163, 184, .22); border-radius: 11px !important;
+                    box-shadow: 0 4px 14px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .06);
+                    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+                    margin: 0; user-select: none; cursor: pointer;
+                    transition: background .18s, border-color .18s, box-shadow .18s, transform .18s, filter .18s;
+                    transition-timing-function: cubic-bezier(.2, .8, .2, 1);
+                }
+                #${_CONFIG_.vipBoxId} .img_box:hover { background: rgba(30, 41, 59, .88); border-color: rgba(148, 163, 184, .45); }
+                #${_CONFIG_.vipBoxId} .img_box:active { transform: scale(.93); }
+                /* 主按钮：VIP 品牌（紫色渐变 + 辉光） */
+                #${_CONFIG_.vipBoxId} .vip_icon { position: relative; }
+                #${_CONFIG_.vipBoxId} .vip_icon > .img_box {
+                    width: 38px; height: 38px; font-size: 12px; font-weight: 800; letter-spacing: .06em; color: #fff;
+                    background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 55%, #a78bfa 100%);
+                    border-color: rgba(196, 181, 253, .55);
+                    box-shadow: 0 6px 20px rgba(109, 40, 217, .45), inset 0 1px 0 rgba(255, 255, 255, .25);
+                }
+                #${_CONFIG_.vipBoxId} .vip_icon > .img_box:hover {
+                    filter: brightness(1.12);
+                    box-shadow: 0 8px 26px rgba(109, 40, 217, .55), inset 0 1px 0 rgba(255, 255, 255, .25);
+                }
+                /* 自动解析开关：状态化配色 */
+                #${_CONFIG_.vipBoxId} #vip_auto { font-size: 12px; color: #94a3b8; }
+                #${_CONFIG_.vipBoxId} #vip_auto.on {
+                    color: #c4b5fd; border-color: rgba(139, 92, 246, .5); background: rgba(76, 29, 149, .6);
+                    box-shadow: 0 4px 14px rgba(109, 40, 217, .35), inset 0 1px 0 rgba(255, 255, 255, .12);
+                }
+                /* 刷新按钮：图标 + 按压旋转反馈 */
+                #${_CONFIG_.vipBoxId} #vip_reload { color: #94a3b8; }
+                #${_CONFIG_.vipBoxId} #vip_reload:hover { color: #e2e8f0; }
+                #${_CONFIG_.vipBoxId} #vip_reload svg { display: block; transition: transform .45s cubic-bezier(.2, .8, .2, 1); }
+                #${_CONFIG_.vipBoxId} #vip_reload:active svg { transform: rotate(360deg); }
+                /* ===== 解析面板（玻璃卡片） ===== */
+                #${_CONFIG_.vipBoxId} .vip_list {
+                    display: none; position: absolute; left: calc(100% + 10px); top: -6px;
+                    width: 400px; max-width: calc(100vw - 60px); max-height: min(500px, 82vh);
+                    overflow-y: auto; overflow-x: hidden; box-sizing: border-box; text-align: left;
+                    background: rgba(11, 17, 29, .92);
+                    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+                    border: 1px solid rgba(148, 163, 184, .16); border-radius: 16px;
+                    box-shadow: 0 16px 48px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .05);
+                    scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, .3) transparent;
+                    animation: vipPanelIn .18s cubic-bezier(.2, .8, .2, 1);
+                }
+                @keyframes vipPanelIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+                #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar { width: 6px; }
+                #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar-track { background: transparent; }
+                #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, .25); border-radius: 3px; }
+                #${_CONFIG_.vipBoxId} .vip_list::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, .4); }
+                /* 面板头（滚动吸顶） */
+                #${_CONFIG_.vipBoxId} .vip_panel_head {
+                    display: flex; align-items: center; gap: 8px; padding: 12px 14px 11px;
+                    border-bottom: 1px solid rgba(148, 163, 184, .12);
+                    position: sticky; top: 0; z-index: 1; background: rgba(11, 17, 29, .97);
+                }
+                #${_CONFIG_.vipBoxId} .vip_panel_title { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #f1f5f9; letter-spacing: .02em; }
+                #${_CONFIG_.vipBoxId} .vip_panel_title em { font-style: normal; font-size: 10px; font-weight: 500; color: #64748b; margin-left: 6px; letter-spacing: 0; }
+                /* 幽灵胶囊按钮（面板头部 + 分节共用） */
+                #${_CONFIG_.vipBoxId} .vip_list button {
+                    display: inline-flex; align-items: center; height: 24px; padding: 0 10px;
+                    border-radius: 8px; border: 1px solid rgba(148, 163, 184, .22);
+                    background: rgba(148, 163, 184, .08); color: #94a3b8;
+                    font-size: 11px; font-weight: 600; line-height: 1; cursor: pointer; user-select: none; white-space: nowrap;
+                    position: static; transform: none; box-shadow: none;
+                    transition: color .16s, border-color .16s, background .16s;
+                }
+                #${_CONFIG_.vipBoxId} .vip_list button:hover { color: #e2e8f0; border-color: rgba(148, 163, 184, .45); background: rgba(148, 163, 184, .14); }
+                #${_CONFIG_.vipBoxId} .vip_sponsor_btn:hover { color: #f9a8d4; border-color: rgba(244, 114, 182, .5); background: rgba(236, 72, 153, .14); }
+                #${_CONFIG_.vipBoxId} .vip_repo_btn:hover { color: #93c5fd; border-color: rgba(96, 165, 250, .5); background: rgba(59, 130, 246, .14); }
+                #${_CONFIG_.vipBoxId} .vip_more_btn:hover { color: #c4b5fd; border-color: rgba(139, 92, 246, .5); background: rgba(139, 92, 246, .12); }
+                #${_CONFIG_.vipBoxId} .vip_web_btn:hover { color: #86efac; border-color: rgba(74, 222, 128, .5); background: rgba(34, 197, 94, .12); }
+                #${_CONFIG_.vipBoxId} .vip_list button:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
+                /* 分节 */
+                #${_CONFIG_.vipBoxId} .vip_section { padding: 10px 12px 6px; }
+                #${_CONFIG_.vipBoxId} .vip_sec_head { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; position: static; }
+                #${_CONFIG_.vipBoxId} .vip_sec_head h3 {
+                    flex: 1; min-width: 0; margin: 0; padding: 0 !important;
+                    display: flex; align-items: center; overflow: hidden; white-space: nowrap;
+                    font-size: 12px !important; font-weight: 700; color: #e2e8f0 !important; letter-spacing: .03em;
+                }
+                #${_CONFIG_.vipBoxId} .vip_sec_head h3 em { font-style: normal; font-size: 10px; font-weight: 500; color: #64748b; margin-left: 6px; letter-spacing: 0; }
+                /* 接口网格：两列胶囊 */
+                #${_CONFIG_.vipBoxId} .vip_list ul {
+                    display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0; padding: 0; list-style: none;
+                }
+                #${_CONFIG_.vipBoxId} .vip_list li {
+                    display: block; box-sizing: border-box; height: 30px; line-height: 28px; padding: 0 8px;
+                    border-radius: 9px; font-size: 12.5px; font-weight: 500; color: #cbd5e1; text-align: center;
+                    background: rgba(148, 163, 184, .06); border: 1px solid rgba(148, 163, 184, .14);
+                    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; float: none; cursor: pointer;
+                    transition: color .15s, border-color .15s, background .15s, box-shadow .15s, transform .15s;
+                }
+                #${_CONFIG_.vipBoxId} .vip_list li:active { transform: scale(.97); }
+                #${_CONFIG_.vipBoxId} .vip_list li:hover { color: #fff; border-color: rgba(139, 92, 246, .55); background: rgba(139, 92, 246, .14); }
+                #${_CONFIG_.vipBoxId} .vip_list li.selected {
+                    color: #fff; font-weight: 600;
+                    border-color: rgba(196, 181, 253, .7);
+                    background: linear-gradient(135deg, #6d28d9, #8b5cf6);
+                    box-shadow: 0 3px 12px rgba(109, 40, 217, .4);
+                }
+                /* 使用必读（默认折叠，点开展开） */
+                #${_CONFIG_.vipBoxId} .vip_notes { border-top: 1px solid rgba(148, 163, 184, .12); }
+                #${_CONFIG_.vipBoxId} .vip_notes summary {
+                    list-style: none; cursor: pointer; user-select: none;
+                    display: flex; align-items: center; gap: 6px; padding: 9px 14px;
+                    font-size: 11px; font-weight: 600; color: #94a3b8; transition: color .15s;
+                }
+                #${_CONFIG_.vipBoxId} .vip_notes summary::-webkit-details-marker { display: none; }
+                #${_CONFIG_.vipBoxId} .vip_notes summary::before { content: '▸'; color: #64748b; font-size: 10px; transition: transform .18s; }
+                #${_CONFIG_.vipBoxId} .vip_notes[open] summary::before { transform: rotate(90deg); }
+                #${_CONFIG_.vipBoxId} .vip_notes summary:hover { color: #c4b5fd; }
+                #${_CONFIG_.vipBoxId} .vip_notes_body { padding: 0 14px 11px; font-size: 10.5px; line-height: 1.8; color: #64748b; }
+                #${_CONFIG_.vipBoxId} .vip_notes_body b { color: #94a3b8; font-weight: 600; }
+                /* 移动端适配 */
+                @media (max-width: 520px) {
+                    #${_CONFIG_.vipBoxId} .vip_list { left: calc(100% + 8px); width: min(320px, calc(100vw - 64px)); max-height: 74vh; }
+                    #${_CONFIG_.vipBoxId} .vip_sec_head h3 em, #${_CONFIG_.vipBoxId} .vip_panel_title em { display: none; }
+                    #${_CONFIG_.vipBoxId} .vip_list ul { gap: 5px; }
+                    #${_CONFIG_.vipBoxId} .vip_list li { height: 29px; line-height: 27px; font-size: 12px; }
+                    #${_CONFIG_.vipBoxId} .vip_section { padding: 8px 10px 5px; }
+                    #${_CONFIG_.vipBoxId} .vip_panel_head { padding: 10px 10px 9px; }
+                }
+            `);
 
             let type_1_str = "";
             let type_3_str = "";
@@ -1119,41 +1248,42 @@ const superVip = (function () {
             $(container).append(`
                 <div id="${_CONFIG_.vipBoxId}">
                     <div class="vip_icon">
-                        <div class="img_box" title="选择解析源" style="color:white;font-size:16px;font-weight:bold;border-radius:5px;"><span style="color:#ffe4e6;">V</span>I<span style="color:#fde68a;">P</span></div>
+                        <div class="img_box" title="选择解析源">VIP</div>
                         <div class="vip_list">
-                            <button type="button" class="vip_sponsor_btn" title="赞助支持脚本持续维护">赞助我们💗</button>
-                            <button type="button" class="vip_repo_btn" title="打开 GitHub 开源地址">开源仓库⭐</button>
-                            <div>
-                                <h3 style="color:#7dd3fc; font-weight: bold; font-size: 16px; padding:5px 0px;">[内嵌播放]</h3>
-                                <ul>
-                                    ${type_1_str}
-                                    <div style="clear:both;"></div>
-                                </ul>
+                            <div class="vip_panel_head">
+                                <span class="vip_panel_title">视频解析中心<em>免费开源</em></span>
+                                <button type="button" class="vip_sponsor_btn" title="赞助支持脚本持续维护">赞助 💗</button>
+                                <button type="button" class="vip_repo_btn" title="打开 GitHub 开源地址">仓库 ⭐</button>
                             </div>
-                            <div>
+                            <div class="vip_section">
                                 <div class="vip_sec_head">
-                                    <button type="button" class="vip_more_btn" title="查看脚本介绍与更多资源">更多资源🎁</button>
-                                    <h3 style="color:#7dd3fc; font-weight: bold; font-size: 16px; padding:5px 0px;">[弹窗播放不带选集]</h3>
-                                    <button type="button" class="vip_web_btn" title="打开在线网页版解析">网页版🌐</button>
+                                    <h3>内嵌播放<em>站内替换 · 带选集</em></h3>
                                 </div>
-                                <ul>
-                                    ${type_3_str}
-                                    <div style="clear:both;"></div>
-                                </ul>
+                                <ul>${type_1_str}</ul>
                             </div>
-                            <div style="text-align:left;color:#b7d7e8;font-size:10px;padding:0px 10px;margin-top:10px;">
-                                <b>👇必看说明👇：</b>
-                                <br>&nbsp;&nbsp;1、本脚本为开源项目，完全免费，请勿上当受骗
-                                <br>&nbsp;&nbsp;2、视频内广告系资源自带，请勿轻信任何广告，可快进跳过
-                                <br>&nbsp;&nbsp;3、无损云解析为资源采集模式，已屏蔽欧美、欧洲线路
-                                <br>&nbsp;&nbsp;4、如遇卡顿/无法加载，可切换不同线路/使用海外网络观看
-                                <br>&nbsp;&nbsp;5、后续更新在 GitHub 仓库：88lin/video_vip
-                                <br>&nbsp;&nbsp;6、资源均来自互联网公开分享，未提供资源上传、存储服务
+                            <div class="vip_section">
+                                <div class="vip_sec_head">
+                                    <h3>弹窗播放<em>新标签页 · 不带选集</em></h3>
+                                    <button type="button" class="vip_more_btn" title="查看脚本介绍与更多资源">更多 🎁</button>
+                                    <button type="button" class="vip_web_btn" title="打开在线网页版解析">网页版 🌐</button>
+                                </div>
+                                <ul>${type_3_str}</ul>
                             </div>
+                            <details class="vip_notes">
+                                <summary>使用必读</summary>
+                                <div class="vip_notes_body">
+                                    <b>1.</b> 本脚本为开源项目，完全免费，请勿上当受骗；
+                                    <br><b>2.</b> 视频内广告系资源自带，请勿轻信任何广告，可快进跳过；
+                                    <br><b>3.</b> 无损云解析为资源采集模式，已屏蔽欧美、欧洲线路；
+                                    <br><b>4.</b> 如遇卡顿/无法加载，可切换不同线路或使用海外网络观看；
+                                    <br><b>5.</b> 后续更新在 GitHub 仓库：88lin/video_vip；
+                                    <br><b>6.</b> 资源均来自互联网公开分享，未提供资源上传、存储服务。
+                                </div>
+                            </details>
                         </div>
                     </div>
-                    <div class="img_box" id="vip_auto" style="color:white;font-size:16px;font-weight:bold;border-radius:5px;" title="是否打开自动解析。若自动解析失败，请手动选择其它接口尝试！！">${autoPlay}</div>
-                    <div class="img_box" id="vip_reload" style="color:white;font-size:14px;font-weight:bold;border-radius:5px;" title="刷新当前解析画面">刷</div>
+                    <div class="img_box${autoPlay === "开" ? " on" : ""}" id="vip_auto" title="自动解析开关。若自动解析失败，请手动选择其它接口尝试！">${autoPlay}</div>
+                    <div class="img_box" id="vip_reload" title="刷新当前解析画面"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></div>
                 </div>`);
             return new Promise((resolve, reject) => resolve(container));
         }
@@ -1273,9 +1403,12 @@ const superVip = (function () {
                 });
                 $(document).mouseup(function () {
                     $(document).off('mousemove');
+                    // 拖拽结束后恢复右键菜单（此前永久禁用且反复绑定会累积 handler）
+                    $(document).off('contextmenu');
                     vipBox.css("cursor", "pointer");
                 });
-                $(document).contextmenu(function (e) {
+                // 先解绑再绑定，避免多次拖拽后 handler 叠加
+                $(document).off('contextmenu').contextmenu(function (e) {
                     e.preventDefault();
                 })
             });
@@ -1287,11 +1420,11 @@ const superVip = (function () {
             vipBox.find("#vip_auto").on("click", function () {
                 if (!!GM_getValue(_CONFIG_.autoPlayerKey, null)) {
                     GM_setValue(_CONFIG_.autoPlayerKey, null);
-                    $(this).html("关");
+                    $(this).html("关").removeClass("on");
                     $(this).attr("title", "是否打开自动解析。若自动解析失败，请手动选择其它接口尝试！");
                 } else {
                     GM_setValue(_CONFIG_.autoPlayerKey, "true");
-                    $(this).html("开");
+                    $(this).html("开").addClass("on");
                 }
                 setTimeout(function () {
                     window.location.reload();
@@ -1435,6 +1568,8 @@ const superVip = (function () {
             }
             _CONFIG_.currentPlayerNode = playerNode[0];
             mallCase = _CONFIG_.currentPlayerNode.name;
+            // 全屏自动隐藏浮窗守卫（仅对已支持的站点生效，见函数注释）
+            startFullscreenFloatGuard();
             const consumers = { Default: DefaultConsumer };
             const targetConsumer = new (consumers[mallCase] || DefaultConsumer)();
             targetConsumer.parse();
