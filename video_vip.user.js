@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name              全网VIP视频免费解析去广告【最新3.2】
 // @namespace         video_vip
-// @version           3.2.9.3
+// @version           3.2.9.4
 // @description       全网VIP视频免费破解去广告，支持爱奇艺、腾讯、优酷、芒果、哔哩哔哩等主流视频网站VIP视频解析，适配桌面端和移动端【脚本长期维护更新，完全免费，无广告，仅限学习交流！】
 // @license           GPL-3.0 License
 // @icon              https://cdn.jsdmirror.com/gh/88lin/picx-images-hosting@master/favicon.67xwxgc03y.svg
@@ -188,16 +188,44 @@ const util = (function () {
             });
         },
         reomveVideo: () => reomveVideo(),
-        urlChangeReload() {
-            let oldHref = window.location.href;
-            let interval = setInterval(() => {
-                let newHref = window.location.href;
-                if (oldHref !== newHref) {
-                    oldHref = newHref;
-                    clearInterval(interval);
-                    window.location.reload();
+        // URL 变化监听（v3.2.9.4）：SPA 路由钩子即时响应 + 1s 轮询兜底
+        // 注意：钩子必须以 href 实际变化为准 —— 站点会高频调用同址 pushState/replaceState
+        // （框架路由/状态同步），无条件触发会把页面刷成死循环
+        onUrlChange(cb) {
+            let stopped = false;
+            let lastHref = window.location.href;
+            const fire = () => {
+                if (stopped) return;
+                const href = window.location.href;
+                if (href === lastHref) return;
+                lastHref = href;
+                cb();
+            };
+            const hooks = [window.history];
+            try {
+                if (typeof unsafeWindow !== 'undefined' && unsafeWindow.history && unsafeWindow.history !== window.history) {
+                    hooks.push(unsafeWindow.history);
                 }
-            }, 1000);
+            } catch (e) {
+            }
+            hooks.forEach((h) => {
+                ["pushState", "replaceState"].forEach((name) => {
+                    try {
+                        const raw = h[name];
+                        if (typeof raw !== "function") return;
+                        h[name] = function (...args) {
+                            const ret = raw.apply(this, args);
+                            fire();
+                            return ret;
+                        };
+                    } catch (e) {
+                    }
+                });
+            });
+            window.addEventListener("popstate", fire);
+            window.addEventListener("hashchange", fire);
+            const timer = setInterval(fire, 1000);
+            return () => { stopped = true; };
         }
     };
 })();
@@ -214,6 +242,10 @@ const superVip = (function () {
         autoPlayerVal: "auto_player_value_" + window.location.host,
         directMode: false,
         manualPicked: false,
+        // 当前解析接管状态（v3.2.9.4）：null=未接管 / 'direct'=无损云直连 / 'iframe'=接口内嵌
+        // 重挂守卫据此判断"官网清掉了我们的播放器"后是否自动恢复
+        parsedMode: null,
+        lastSource: null,
         cleanupTimer: null,
         wsyzyFsbBound: false,
         fullscreenCleanupBound: false,
@@ -439,6 +471,24 @@ const superVip = (function () {
         return {title: wsyzyCleanTitle(document.title), trusted: false};
     }
 
+    // 当前集数（v3.2.9.4 移至外层：切集自动跟随的集数漂移检测也要用）
+    function curEpNum() {
+        let m;
+        // URL 查询参数优先：?ep=X / ?episode=X / ?p=X / ?e=X / ?cur=X（爱奇艺）
+        m = location.href.match(/[?&](?:ep|episode|p|e|cur)=(\d{1,5})(?!\d)/i);
+        if (m) return parseInt(m[1], 10);
+        // 腾讯：/pN.html（如 /p9.html → 第9集）
+        m = location.href.match(/\/p(\d{1,5})\.html/i);
+        if (m) return parseInt(m[1], 10);
+        // B站/Mango：/epN（如 /bangumi/play/ep33 → 第33集）
+        m = location.href.match(/\/ep(\d{1,5})(?!\d)/i);
+        if (m) return parseInt(m[1], 10);
+        // 标题中的"第X集/期/话"或无"第"前缀的"X集"（如"第12集"、"更新至12集"）
+        m = (document.title + ' ' + location.href).match(/第?\s*(\d{1,8})\s*[集期话]/);
+        if (m) return parseInt(m[1], 10);
+        return 0;
+    }
+
     /* ==========================================================
      * 无损云直连模块：suggest搜索 -> API取m3u8 -> 内嵌无损云官方播放器
      * ========================================================== */
@@ -573,23 +623,6 @@ const superVip = (function () {
             const j = JSON.parse(t);
             const v = j.list && j.list[0];
             return parseEps(v && v.vod_play_url);
-        }
-
-        function curEpNum() {
-            let m;
-            // URL 查询参数优先：?ep=X / ?episode=X / ?p=X / ?e=X / ?cur=X（爱奇艺）
-            m = location.href.match(/[?&](?:ep|episode|p|e|cur)=(\d{1,5})(?!\d)/i);
-            if (m) return parseInt(m[1], 10);
-            // 腾讯：/pN.html（如 /p9.html → 第9集）
-            m = location.href.match(/\/p(\d{1,5})\.html/i);
-            if (m) return parseInt(m[1], 10);
-            // B站/Mango：/epN（如 /bangumi/play/ep33 → 第33集）
-            m = location.href.match(/\/ep(\d{1,5})(?!\d)/i);
-            if (m) return parseInt(m[1], 10);
-            // 标题中的"第X集/期/话"或无"第"前缀的"X集"（如"第12集"、"更新至12集"）
-            m = (document.title + ' ' + location.href).match(/第?\s*(\d{1,8})\s*[集期话]/);
-            if (m) return parseInt(m[1], 10);
-            return 0;
         }
 
         // 广告声抑制器（直连模式期间启用，作为 reomveVideo 的第二道防线）：
@@ -945,14 +978,17 @@ const superVip = (function () {
         let _running = false;
         let _aborted = false;
         let _takeoverTimeout = false;
+        let _retryTimer = null;
+        let _restarting = false;
 
         function abort() {
             _aborted = true;
+            if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
             stopAdSoundSuppressor();
             if (_CONFIG_.cleanupTimer) { clearInterval(_CONFIG_.cleanupTimer); _CONFIG_.cleanupTimer = null; }
         }
 
-        async function play() {
+        async function play(isAutoRetry) {
             if (_running) {
                 toast('正在加载中，请稍候...');
                 return;
@@ -1065,6 +1101,17 @@ const superVip = (function () {
                     // 失败时清理 cleanupTimer，停止持续隐藏官方播放器元素
                     // （若已被外部 abort 清理/接管则跳过，避免误清其他流程的定时器）
                     if (!_aborted && _CONFIG_.cleanupTimer) { clearInterval(_CONFIG_.cleanupTimer); _CONFIG_.cleanupTimer = null; }
+                    // 失败自动重试一次（v3.2.9.4）：搜索抖动/容器未就绪等瞬时失败
+                    // 不再停在错误占位层；重试仍失败才交还用户手动处理
+                    if (!isAutoRetry) {
+                        toast('将在 5 秒后自动重试...', false);
+                        if (ui) ui.setStatus('将在 5 秒后自动重试...');
+                        _retryTimer = setTimeout(() => {
+                            _retryTimer = null;
+                            // 等待期间被用户切走（abort）→ 放弃重试
+                            if (!_aborted || _takeoverTimeout) play(true);
+                        }, 5000);
+                    }
                 }
                 stopAdSoundSuppressor();
             } finally {
@@ -1072,7 +1119,24 @@ const superVip = (function () {
             }
         }
 
-        return { play, stop: abort };
+        // 重新解析（v3.2.9.4）：切集自动跟随/重挂守卫触发时使用。
+        // 先 abort 掉进行中的旧流程并等其收尾，避免新旧流程共用 _aborted 互相干扰
+        async function restart() {
+            if (_restarting) return;
+            _restarting = true;
+            try {
+                abort();
+                const t0 = Date.now();
+                while (_running && Date.now() - t0 < 12000) {
+                    await new Promise(r => setTimeout(r, 150));
+                }
+                if (!_running) play(true);
+            } finally {
+                _restarting = false;
+            }
+        }
+
+        return { play, stop: abort, restart, busy: () => _running };
     })();
 
     /* ==========================================================
@@ -1119,6 +1183,8 @@ const superVip = (function () {
 
     class BaseConsumer {
         constructor() {
+            // 嵌入代数号：废弃迟到的 findTargetEle 结果，防止旧请求覆盖用户后来的选择
+            this._embedGen = 0;
             this.parse = () => {
                 util.findTargetEle('body')
                     .then((container) => this.preHandle(container))
@@ -1498,6 +1564,9 @@ const superVip = (function () {
                     const index = parseInt($(item).attr("data-index"));
                     const videoObj = _CONFIG_.videoParseList[index];
                     _CONFIG_.manualPicked = true;
+                    // 用户改走弹窗播放 → 退出接管状态，避免重挂守卫把站内播放器又挂回来
+                    _CONFIG_.parsedMode = null;
+                    _CONFIG_.lastSource = null;
                     if (_CONFIG_.directMode) {
                         // 移除页面内直连播放器，避免与弹窗播放双份声音
                         document.querySelectorAll('.' + _CONFIG_.iframeWrapperClass).forEach((node) => node.remove());
@@ -1600,13 +1669,19 @@ const superVip = (function () {
         showPlayerWindow(videoObj) {
             if (videoObj.wsyzy) {
                 _CONFIG_.directMode = true;
+                _CONFIG_.parsedMode = 'direct';
+                _CONFIG_.lastSource = videoObj;
                 wsyzyDirect.play().catch(e => console.warn('[无损云直连]', e.message));
                 return;
             }
             _CONFIG_.directMode = false;
+            _CONFIG_.parsedMode = 'iframe';
+            _CONFIG_.lastSource = videoObj;
             wsyzyDirect.stop();   // 切回解析接口时停止直连模式的广告声抑制
+            const embedGen = ++this._embedGen;
             util.findTargetEle(_CONFIG_.currentPlayerNode.container)
                 .then((container) => {
+                    if (embedGen !== this._embedGen) return; // 已有更新的嵌入请求（用户重新选源/守卫重挂）
                     const type = videoObj.type;
                     let url = videoObj.url + window.location.href;
                     if (type.includes("1")) {
@@ -1664,22 +1739,95 @@ const superVip = (function () {
                 }).catch(() => {});
         }
 
+        // ===== 切集自动跟随（v3.2.9.4）=====
+        // 旧实现只有"1s 轮询 href → 整页 reload"一条路，两类场景会失灵：
+        //   1) 站点切集不改 URL（纯前端换集）→ 轮询永不触发；
+        //   2) SPA 重渲染播放器容器，把脚本内嵌的 wrapper 连 iframe 一起清掉，无人重挂。
+        // 现由四件套配合：onUrlChange 即时 reload（钩子+轮询兜底）、
+        // startEpisodeWatch 监听标题集数漂移（直连模式原地重解析）、
+        // startWrapperGuard 自动重挂被清掉的 wrapper、直连失败自动重试一次。
+
         postHandle(container) {
-            if (!!GM_getValue(_CONFIG_.autoPlayerKey, null)) {
-                util.urlChangeReload();
-            } else {
-                let oldHref = window.location.href;
-                let interval = setInterval(() => {
-                    let newHref = window.location.href;
-                    if (oldHref !== newHref) {
-                        oldHref = newHref;
-                        if (!!GM_getValue(_CONFIG_.flag, null)){
-                            clearInterval(interval);
-                            window.location.reload();
-                        }
+            // 一次导航只做一个动作；reload 已在途时守卫全部让位
+            const latch = { done: false };
+            const navReload = () => {
+                if (latch.done) return;
+                // 熔断保险（v3.2.9.4 补丁）：30 秒内连续刷新 ≥3 次判定为异常循环
+                // （个别站点每次加载都会改写 URL），自动跟随直接停用，保住可看性
+                try {
+                    const key = 'vv_nav_reload_ts';
+                    const now = Date.now();
+                    const stamps = JSON.parse(sessionStorage.getItem(key) || '[]').filter(t => now - t < 30000);
+                    if (stamps.length >= 3) {
+                        latch.done = true;
+                        toast('检测到刷新循环，已暂停切集自动跟随（可手动刷新页面恢复）', false);
+                        return;
                     }
-                }, 1000);
+                    stamps.push(now);
+                    sessionStorage.setItem(key, JSON.stringify(stamps));
+                } catch (e) {
+                }
+                latch.done = true;
+                window.location.reload();
+            };
+            if (!!GM_getValue(_CONFIG_.autoPlayerKey, null)) {
+                util.onUrlChange(navReload);
+            } else {
+                // 非自动模式沿用原语义：仅当用户在本次页面里手动选过源（flag）才整页刷新
+                util.onUrlChange(() => {
+                    if (!!GM_getValue(_CONFIG_.flag, null)) navReload();
+                });
             }
+            this.startWrapperGuard(latch);
+            this.startEpisodeWatch(latch);
+        }
+
+        // 守卫一：解析 wrapper 被官网重渲染清掉（querySelector 找不到）→ 自动重挂
+        startWrapperGuard(latch) {
+            let misses = 0;
+            let lastFix = 0;
+            const timer = setInterval(() => {
+                if (latch.done) { clearInterval(timer); return; }
+                if (!_CONFIG_.parsedMode) { misses = 0; return; }
+                // 直连流程自会重挂 wrapper，跳过避免打架
+                if (_CONFIG_.parsedMode === 'direct' && wsyzyDirect.busy()) { misses = 0; return; }
+                if (document.querySelector('.' + _CONFIG_.iframeWrapperClass)) { misses = 0; return; }
+                // 连续 2 秒缺失才动作，避开站点重建播放器的中间态
+                if (++misses < 2) return;
+                misses = 0;
+                // 冷却 10 秒：站点若反复清容器，避免"挂上→被清→再挂"来回闪屏
+                if (Date.now() - lastFix < 10000) return;
+                lastFix = Date.now();
+                if (_CONFIG_.parsedMode === 'direct') {
+                    wsyzyDirect.restart();
+                } else if (_CONFIG_.parsedMode === 'iframe' && _CONFIG_.lastSource) {
+                    this.showPlayerWindow(_CONFIG_.lastSource);
+                }
+            }, 1000);
+        }
+
+        // 守卫二：URL 未变但标题里的集数变了（纯前端切集）→ 直连模式原地重新解析。
+        // 接口内嵌模式以 URL 为解析依据，URL 未变时无法跟随，仅记录基线
+        startEpisodeWatch(latch) {
+            let lastEp = curEpNum();
+            let candEp = 0; // 新集数需连续两次检测到才动作，滤掉标题瞬时抖动
+            const timer = setInterval(() => {
+                if (latch.done) { clearInterval(timer); return; }
+                const ep = curEpNum();
+                if (!ep) return; // 标题未就绪/无集数信息，保持基线
+                if (lastEp && ep !== lastEp) {
+                    if (ep !== candEp) { candEp = ep; return; }
+                    candEp = 0;
+                    lastEp = ep;
+                    if (_CONFIG_.parsedMode === 'direct') {
+                        toast(`检测到切到第 ${ep} 集，重新解析...`, false);
+                        wsyzyDirect.restart();
+                    }
+                } else {
+                    lastEp = ep;
+                    candEp = 0;
+                }
+            }, 2000);
         }
 
     }
