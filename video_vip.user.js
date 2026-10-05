@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name              全网VIP视频免费解析去广告【最新3.2】
 // @namespace         video_vip
-// @version           3.2.9.4
+// @version           3.2.9.6
 // @description       全网VIP视频免费破解去广告，支持爱奇艺、腾讯、优酷、芒果、哔哩哔哩等主流视频网站VIP视频解析，适配桌面端和移动端【脚本长期维护更新，完全免费，无广告，仅限学习交流！】
 // @license           GPL-3.0 License
 // @icon              https://cdn.jsdmirror.com/gh/88lin/picx-images-hosting@master/favicon.67xwxgc03y.svg
@@ -996,6 +996,7 @@ const superVip = (function () {
             _running = true;
             _aborted = false;
             _takeoverTimeout = false;
+            console.log('[无损云直连] 开始解析' + (isAutoRetry ? '（自动重试）' : ''), window.location.href);
             let ui = null;
             try {
                 // 第一步：启动广告声抑制（只静音，不 pause/不删 src，不干扰页面 JS）
@@ -1088,6 +1089,8 @@ const superVip = (function () {
                 load(eps[idx]);
                 ui.hidePlaceholder();
                 mountEpBar(ui.epBar, ui.wrapper, load, eps, idx);
+                console.log(`[无损云直连] 解析成功: 「${title}」→「${hit.name}」共${eps.length}集，当前第${idx + 1}集`);
+                parseStats.record(parseStats.directName(), true);
                 toast(_CONFIG_.isMobile
                     ? '✓ 无损云播放中（点右上角「☰ 选集」可换集）'
                     : '✓ 无损云播放中（鼠标移到播放器右侧可换集）');
@@ -1095,7 +1098,9 @@ const superVip = (function () {
                 if (_aborted && !_takeoverTimeout) {
                     console.log('[无损云直连] 流程已取消');
                 } else {
-                    console.warn('[无损云直连]', e.message);
+                    console.warn('[无损云直连] 解析失败' + (isAutoRetry ? '（重试）' : '') + ':', e.message);
+                    // 非重试失败还会自动再试一次，最终成败由重试那次记录；重试仍失败才计失败
+                    if (isAutoRetry) parseStats.record(parseStats.directName(), false);
                     toast('✗ ' + e.message);
                     if (ui) ui.setStatus('✗ ' + e.message);
                     // 失败时清理 cleanupTimer，停止持续隐藏官方播放器元素
@@ -1181,10 +1186,66 @@ const superVip = (function () {
         return { probe };
     })();
 
+    /* ==========================================================
+     * 失败率降级模块（v3.2.9.5）：按源名统计解析成败并持久化（GM 存储，全站共享）。
+     * 失败率过高的源：自动解析时避开、面板标记「低成功率」、测速排序沉底。
+     * 成败信号：无损云有明确结果；内嵌接口跨源读不到内部状态，以
+     * 「判定窗口内被用户切走=失败；未切走则按 iframe 是否加载完成」近似判定。
+     * ========================================================== */
+    const parseStats = (function () {
+        const KEY = 'vv_parse_stats';
+        const MIN_SAMPLES = 3;   // 样本不足不判定，避免早期误杀
+        const FAIL_RATE = 0.6;   // 失败率阈值
+        let data = {};
+        try { data = JSON.parse(GM_getValue(KEY, '{}')) || {}; } catch (e) { data = {}; }
+
+        function save() { GM_setValue(KEY, JSON.stringify(data)); }
+
+        function record(name, ok) {
+            if (!name) return;
+            const s = data[name] || (data[name] = { ok: 0, fail: 0 });
+            if (ok) s.ok++; else s.fail++;
+            save();
+            console.log(`[失败率统计] ${name} ${ok ? '成功' : '失败'} → 累计 ${s.ok}✓/${s.fail}✗`);
+            refreshMarks();
+        }
+
+        function rate(name) {
+            const s = data[name];
+            if (!s) return null;
+            const total = s.ok + s.fail;
+            return total < MIN_SAMPLES ? null : s.fail / total;
+        }
+
+        function degraded(name) {
+            const r = rate(name);
+            return r !== null && r >= FAIL_RATE;
+        }
+
+        // 面板列表同步「降级」标记
+        function refreshMarks() {
+            const box = document.getElementById(_CONFIG_.vipBoxId);
+            if (!box) return;
+            box.querySelectorAll('.vip_list li').forEach((li) => {
+                const item = _CONFIG_.videoParseList[parseInt(li.getAttribute('data-index'), 10)];
+                li.classList.toggle('vip_demoted', !!(item && degraded(item.name)));
+            });
+        }
+
+        function directName() {
+            const o = _CONFIG_.videoParseList.find(v => v.wsyzy);
+            return o ? o.name : '';
+        }
+
+        return { record, degraded, refreshMarks, directName, MIN_SAMPLES, FAIL_RATE };
+    })();
+
     class BaseConsumer {
         constructor() {
             // 嵌入代数号：废弃迟到的 findTargetEle 结果，防止旧请求覆盖用户后来的选择
             this._embedGen = 0;
+            // 失败率降级：当前源的在候判定（窗口期内被切走=失败，超时按 iframe 加载结果）
+            this._pending = null;
             this.parse = () => {
                 util.findTargetEle('body')
                     .then((container) => this.preHandle(container))
@@ -1351,6 +1412,12 @@ const superVip = (function () {
                 #${_CONFIG_.vipBoxId} .vip_notes_body { padding: 0 14px 11px; font-size: 10.5px; line-height: 1.8; color: #64748b; }
                 #${_CONFIG_.vipBoxId} .vip_notes_body b { color: #94a3b8; font-weight: 600; }
                 /* 移动端适配 */
+                /* 失败率降级标记：低成功率源半透明 + 「低成功率」角标 */
+                #${_CONFIG_.vipBoxId} .vip_list li.vip_demoted { opacity: .5; }
+                #${_CONFIG_.vipBoxId} .vip_list li.vip_demoted .vip_name::after {
+                    content: "低成功率"; font-size: 10px; font-weight: 600; font-style: normal;
+                    color: #fbbf24; margin-left: 5px;
+                }
                 @media (max-width: 520px) {
                     #${_CONFIG_.vipBoxId} .vip_list { left: calc(100% + 8px); width: min(320px, calc(100vw - 64px)); max-height: 74vh; }
                     #${_CONFIG_.vipBoxId} .vip_sec_head h3 em, #${_CONFIG_.vipBoxId} .vip_panel_title em { display: none; }
@@ -1419,6 +1486,7 @@ const superVip = (function () {
                     <div class="img_box${autoPlay === "开" ? " on" : ""}" id="vip_auto" title="自动解析开关。若自动解析失败，请手动选择其它接口尝试！">${autoPlay}</div>
                     <div class="img_box" id="vip_reload" title="刷新当前解析画面"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></div>
                 </div>`);
+            parseStats.refreshMarks(); // 面板初次渲染即同步历史降级标记
             return new Promise((resolve, reject) => resolve(container));
         }
 
@@ -1478,7 +1546,11 @@ const superVip = (function () {
                         const ib = parseInt(b.getAttribute("data-index"), 10);
                         const va = results[ia] < 0 ? Infinity : results[ia];
                         const vb = results[ib] < 0 ? Infinity : results[ib];
-                        return va === vb ? ia - ib : va - vb;
+                        if (va !== vb) return va - vb;
+                        // 同耗时：低成功率源沉底，再按原顺序
+                        const da = parseStats.degraded(list[ia].name) ? 1 : 0;
+                        const db = parseStats.degraded(list[ib].name) ? 1 : 0;
+                        return da !== db ? da - db : ia - ib;
                     });
                     lis.forEach((li) => ul.appendChild(li));
                 });
@@ -1659,6 +1731,15 @@ const superVip = (function () {
                 let idx = GM_getValue(_CONFIG_.autoPlayerVal, 1);
                 let obj = _CONFIG_.videoParseList[idx];
                 if (!obj || !obj.type.includes("1")) return;
+                // 失败率降级：上次选的源失败率过高 → 自动换成首个未降级的内嵌源（全部降级则维持原选）
+                if (parseStats.degraded(obj.name)) {
+                    const alt = _CONFIG_.videoParseList.findIndex((o, i) => i !== idx && o.type.includes("1") && !parseStats.degraded(o.name));
+                    if (alt >= 0) {
+                        console.log(`[失败率统计] 「${obj.name}」失败率过高，自动改用「${_CONFIG_.videoParseList[alt].name}」`);
+                        idx = alt;
+                        obj = _CONFIG_.videoParseList[idx];
+                    }
+                }
                 _th.showPlayerWindow(obj);
                 const vipBox = $(`#${_CONFIG_.vipBoxId}`);
                 vipBox.find(`.vip_list [data-index="${idx}"]`).addClass("selected");
@@ -1666,7 +1747,30 @@ const superVip = (function () {
             }, 1500);
         }
 
+        // 失败率降级：结束上一个源的在候判定。用户在窗口期内切到别的源 → 上一个源记失败
+        settlePending(nextName) {
+            const p = this._pending;
+            if (!p) return;
+            this._pending = null;
+            if (p.timer) { clearTimeout(p.timer); p.timer = null; }
+            if (nextName && nextName !== p.name) parseStats.record(p.name, false);
+        }
+
+        // 失败率降级：为刚嵌入的源开启判定窗口；超时未被切走则按 iframe 加载结果记录
+        startPending(name, iframe) {
+            let loaded = false;
+            iframe.addEventListener('load', () => { loaded = true; });
+            const timer = setTimeout(() => {
+                if (this._pending && this._pending.name === name) {
+                    this._pending = null;
+                    parseStats.record(name, loaded);
+                }
+            }, 25000);
+            this._pending = { name, timer };
+        }
+
         showPlayerWindow(videoObj) {
+            this.settlePending(videoObj.name);
             if (videoObj.wsyzy) {
                 _CONFIG_.directMode = true;
                 _CONFIG_.parsedMode = 'direct';
@@ -1735,25 +1839,32 @@ const superVip = (function () {
 
                         iframeWrapper.appendChild(iframe);
                         container.appendChild(iframeWrapper);
+                        this.startPending(videoObj.name, iframe);
+                        console.log('[解析接口] 嵌入解析源:', videoObj.name, url);
+                        iframe.addEventListener('load', () => console.log('[解析接口] iframe 已加载:', videoObj.name));
                     }
                 }).catch(() => {});
         }
 
-        // ===== 切集自动跟随（v3.2.9.4）=====
-        // 旧实现只有"1s 轮询 href → 整页 reload"一条路，两类场景会失灵：
-        //   1) 站点切集不改 URL（纯前端换集）→ 轮询永不触发；
-        //   2) SPA 重渲染播放器容器，把脚本内嵌的 wrapper 连 iframe 一起清掉，无人重挂。
-        // 现由四件套配合：onUrlChange 即时 reload（钩子+轮询兜底）、
-        // startEpisodeWatch 监听标题集数漂移（直连模式原地重解析）、
-        // startWrapperGuard 自动重挂被清掉的 wrapper、直连失败自动重试一次。
+        // ===== 切集自动跟随（v3.2.9.5）=====
+        // 旧实现只有"URL 变 → 整页 reload"一条路，三类场景会失灵：
+        //   1) 自动解析关（手动选源）时基本永远不跟（flag 机制形同虚设）；
+        //   2) reload 又慢又易触发熔断，快切几集后跟随整体哑掉；
+        //   3) 站点切集不改 URL（纯前端换集）→ 无人响应。
+        // 现在的主路径：URL 变化且已接管 → 原地重新解析（直连 restart / 内嵌重建 iframe），
+        // 自动与手动模式一致，不整页刷新；配合 startEpisodeWatch 监听标题集数漂移
+        // （URL 未变的切集，直连模式）、startWrapperGuard 自动重挂被站点清掉的 wrapper、
+        // 直连失败自动重试一次。整页 reload 仅保留给"自动开但尚未接管"的初始化场景。
 
         postHandle(container) {
-            // 一次导航只做一个动作；reload 已在途时守卫全部让位
-            const latch = { done: false };
+            // 跟随主路径（v3.2.9.5）：URL 变化时若已接管播放器，原地重新解析
+            // （直连重跑搜索、内嵌重建 iframe），自动/手动模式都生效且不整页刷新；
+            // 仅"自动解析开但尚未接管"时才整页重载，由熔断器兜底防循环
+            const latch = { done: false, followedEp: 0 };
             const navReload = () => {
                 if (latch.done) return;
-                // 熔断保险（v3.2.9.4 补丁）：30 秒内连续刷新 ≥3 次判定为异常循环
-                // （个别站点每次加载都会改写 URL），自动跟随直接停用，保住可看性
+                // 熔断保险：30 秒内连续刷新 ≥3 次判定为异常循环（个别站点每次加载
+                // 都会改写 URL），自动跟随直接停用，保住可看性
                 try {
                     const key = 'vv_nav_reload_ts';
                     const now = Date.now();
@@ -1770,14 +1881,18 @@ const superVip = (function () {
                 latch.done = true;
                 window.location.reload();
             };
-            if (!!GM_getValue(_CONFIG_.autoPlayerKey, null)) {
-                util.onUrlChange(navReload);
-            } else {
-                // 非自动模式沿用原语义：仅当用户在本次页面里手动选过源（flag）才整页刷新
-                util.onUrlChange(() => {
-                    if (!!GM_getValue(_CONFIG_.flag, null)) navReload();
-                });
-            }
+            util.onUrlChange(() => {
+                if (latch.done) return;
+                if (_CONFIG_.parsedMode === 'direct') {
+                    latch.followedEp = curEpNum(); // 告知集数守卫：这集已由原地重解析跟上
+                    wsyzyDirect.restart();
+                } else if (_CONFIG_.parsedMode === 'iframe' && _CONFIG_.lastSource) {
+                    latch.followedEp = curEpNum();
+                    this.showPlayerWindow(_CONFIG_.lastSource);
+                } else if (!!GM_getValue(_CONFIG_.autoPlayerKey, null)) {
+                    navReload();
+                }
+            });
             this.startWrapperGuard(latch);
             this.startEpisodeWatch(latch);
         }
@@ -1807,7 +1922,7 @@ const superVip = (function () {
         }
 
         // 守卫二：URL 未变但标题里的集数变了（纯前端切集）→ 直连模式原地重新解析。
-        // 接口内嵌模式以 URL 为解析依据，URL 未变时无法跟随，仅记录基线
+        // 接口内嵌模式以 URL 为解析依据，URL 未变时无法跟随，仅同步基线
         startEpisodeWatch(latch) {
             let lastEp = curEpNum();
             let candEp = 0; // 新集数需连续两次检测到才动作，滤掉标题瞬时抖动
@@ -1815,6 +1930,18 @@ const superVip = (function () {
                 if (latch.done) { clearInterval(timer); return; }
                 const ep = curEpNum();
                 if (!ep) return; // 标题未就绪/无集数信息，保持基线
+                // URL 变化那集已由 follow 原地重解析跟上：等到标题显示该集数就同步基线；
+                // 若等到的是别的集数，说明用户又切了一集，走下面的漂移流程
+                if (latch.followedEp) {
+                    if (ep === latch.followedEp) {
+                        latch.followedEp = 0;
+                        lastEp = ep;
+                        candEp = 0;
+                        return;
+                    }
+                    if (ep === lastEp) return; // 标题还没更新到新集数，继续等
+                    latch.followedEp = 0;
+                }
                 if (lastEp && ep !== lastEp) {
                     if (ep !== candEp) { candEp = ep; return; }
                     candEp = 0;
@@ -1827,7 +1954,7 @@ const superVip = (function () {
                     lastEp = ep;
                     candEp = 0;
                 }
-            }, 2000);
+            }, 1500);
         }
 
     }
